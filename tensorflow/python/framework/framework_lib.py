@@ -37,6 +37,7 @@
 @@get_default_graph
 @@reset_default_graph
 @@import_graph_def
+@@load_file_system_library
 @@load_op_library
 
 ## Graph collections
@@ -66,6 +67,7 @@ from __future__ import division
 from __future__ import print_function
 
 # Classes used when building a Graph.
+from tensorflow.python.framework.device import DeviceSpec
 from tensorflow.python.framework.ops import Graph
 from tensorflow.python.framework.ops import Operation
 from tensorflow.python.framework.ops import Tensor

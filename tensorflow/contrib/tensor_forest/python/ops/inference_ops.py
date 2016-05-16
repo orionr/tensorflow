@@ -41,7 +41,7 @@ def TreePredictions(op):
   num_classes = op.inputs[3].get_shape()[1].value
   # The output of TreePredictions is
   # [node_pcw(evaluate_tree(x), c) for c in classes for x in input_data].
-  return [tensor_shape.TensorShape([num_points, num_classes])]
+  return [tensor_shape.TensorShape([num_points, num_classes - 1])]
 
 
 # Workaround for the fact that importing tensorflow imports contrib
@@ -49,12 +49,13 @@ def TreePredictions(op):
 # there's not yet any guarantee that the shared object exists.
 # In which case, "import tensorflow" will always crash, even for users that
 # never use contrib.
-def Load():
+def Load(library_base_dir=''):
   """Load the inference ops library and return the loaded module."""
   with _ops_lock:
     global _inference_ops
     if not _inference_ops:
-      data_files_path = tf.resource_loader.get_data_files_path()
+      data_files_path = os.path.join(library_base_dir,
+                                     tf.resource_loader.get_data_files_path())
       tf.logging.info('data path: %s', data_files_path)
       _inference_ops = tf.load_op_library(os.path.join(
           data_files_path, INFERENCE_OPS_FILE))

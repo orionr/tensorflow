@@ -20,6 +20,7 @@
 
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/kernels/bounds_check.h"
 
 namespace tensorflow {
 
@@ -28,6 +29,7 @@ using tensorforest::FEATURE_INDEX;
 using tensorforest::LEAF_NODE;
 using tensorforest::FREE_NODE;
 
+using tensorforest::CheckTensorBounds;
 using tensorforest::DecideNode;
 using tensorforest::Sum;
 
@@ -44,9 +46,9 @@ REGISTER_OP("TreePredictions")
 
   input_data: The training batch's features as a 2-d tensor; `input_data[i][j]`
    gives the j-th feature of the i-th input.
-  tree:= A 2-d int32 tensor.  `tree[0][i]` gives the index of the left child
-   of the i-th node, `tree[0][i] + 1` gives the index of the right child of
-   the i-th node, and `tree[1][i]` gives the index of the feature used to
+  tree:= A 2-d int32 tensor.  `tree[i][0]` gives the index of the left child
+   of the i-th node, `tree[i][0] + 1` gives the index of the right child of
+   the i-th node, and `tree[i][1]` gives the index of the feature used to
    split the i-th node.
   tree_thresholds: `tree_thresholds[i]` is the value used to split the i-th
    node.
@@ -98,13 +100,23 @@ class TreePredictions : public OpKernel {
             "Number of nodes should be the same in "
             "tree, tree_thresholds and node_pcw."));
 
-    const int32 num_classes = node_per_class_weights.shape().dim_size(1);
-    const int32 num_data = input_data.shape().dim_size(0);
+    // Check tensor bounds.
+    if (!CheckTensorBounds(context, input_data)) return;
+    if (!CheckTensorBounds(context, tree_tensor)) return;
+    if (!CheckTensorBounds(context, tree_thresholds)) return;
+    if (!CheckTensorBounds(context, node_per_class_weights)) return;
+
+    const int32 num_classes = static_cast<int32>(
+        node_per_class_weights.shape().dim_size(1));
+    const int32 num_data = static_cast<int32>(
+        input_data.shape().dim_size(0));
+    const int32 num_nodes = static_cast<int32>(
+        tree_tensor.shape().dim_size(0));
 
     Tensor* output_predictions = nullptr;
     TensorShape output_shape;
     output_shape.AddDim(num_data);
-    output_shape.AddDim(num_classes);
+    output_shape.AddDim(num_classes - 1);
     OP_REQUIRES_OK(context,
                    context->allocate_output(0, output_shape,
                                             &output_predictions));
@@ -119,16 +131,16 @@ class TreePredictions : public OpKernel {
       int node_index = 0;
       int parent = -1;
       while (true) {
+        OP_REQUIRES(context, FastBoundsCheck(node_index, num_nodes),
+                    errors::InvalidArgument("node_index not in valid range."))
         const int32 left_child = tree(node_index, CHILDREN_INDEX);
         if (left_child == LEAF_NODE) {
-          float sum = Sum<float>(node_per_class_weights.Slice(
-              node_index, node_index + 1));
+          float sum = node_pcw(node_index, 0);
           float parent_weight = 0.0;
           if (sum < valid_leaf_threshold_ && parent >= 0) {
             VLOG(1) << "not enough samples at leaf, including parent counts."
                     << "child sum = " << sum;
-            float parent_sum = Sum<float>(node_per_class_weights.Slice(
-                parent, parent + 1));
+            float parent_sum = node_pcw(parent, 0);
             // Weight the parent's counts just enough so that the new sum is
             // valid_leaf_threshold_, but never give any counts a weight of
             // more than 1.
@@ -137,12 +149,12 @@ class TreePredictions : public OpKernel {
             sum += parent_weight * parent_sum;
             VLOG(1) << "Sum w/ parent included = " << sum;
           }
-          for (int c = 0; c < num_classes; c++) {
+          for (int c = 1; c < num_classes; c++) {
             float w = node_pcw(node_index, c);
             if (parent_weight > 0.0) {
               w += parent_weight * node_pcw(parent, c);
             }
-            out(i, c) = w / sum;
+            out(i, c - 1) = w / sum;
           }
           break;
         } else if (left_child == FREE_NODE) {

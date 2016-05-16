@@ -52,7 +52,7 @@ class BiasOp<CPUDevice, T> : public BinaryOp<T> {
       data_format_ = FORMAT_NHWC;
     }
     OP_REQUIRES(context, data_format_ == FORMAT_NHWC,
-                errors::InvalidArgument("CPU BiasOp only suuports NHWC."));
+                errors::InvalidArgument("CPU BiasOp only supports NHWC."));
   }
 
   void Compute(OpKernelContext* context) override {
@@ -149,6 +149,18 @@ void GetBiasValueDims(const Tensor& value_tensor, TensorFormat data_format,
   }
 }
 
+template <class T>
+struct AccumulatorType {
+  typedef T type;
+};
+
+// float is faster on the CPU than half, and also more precise,
+// so use float for the temporary accumulators.
+template <>
+struct AccumulatorType<Eigen::half> {
+  typedef float type;
+};
+
 }  // namespace
 
 template <typename Device, typename T>
@@ -167,7 +179,7 @@ class BiasGradOp<CPUDevice, T> : public OpKernel {
       data_format_ = FORMAT_NHWC;
     }
     OP_REQUIRES(context, data_format_ == FORMAT_NHWC,
-                errors::InvalidArgument("CPU BiasGradOp only suuports NHWC."));
+                errors::InvalidArgument("CPU BiasGradOp only supports NHWC."));
   }
 
   void Compute(OpKernelContext* context) override {
@@ -189,18 +201,19 @@ class BiasGradOp<CPUDevice, T> : public OpKernel {
     Tensor* output = nullptr;
     TensorShape output_shape{channel};
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output));
-    int32 total_count = static_cast<int32>(output_backprop.NumElements());
-    int32 bias_size = channel;
-    const T* output_backprop_data = output_backprop.template flat<T>().data();
-    T* output_data = output->template flat<T>().data();
-    memset(output_data, 0, sizeof(T) * bias_size);
-    int32 bias_index = 0;
-    for (int32 i = 0; i < total_count; i++) {
-      output_data[bias_index++] += output_backprop_data[i];
-      if (bias_index >= bias_size) {
-        bias_index = 0;
-      }
-    }
+
+    Eigen::DSizes<int, 2> two_dims(batch * height * width, channel);
+#ifdef EIGEN_HAS_INDEX_LIST
+    Eigen::IndexList<Eigen::type2index<0> > reduction_axis;
+#else
+    Eigen::array<int, 1> reduction_axis = {0};
+#endif
+    output->template flat<T>().device(context->eigen_device<CPUDevice>()) =
+        output_backprop.flat<T>()
+            .template cast<typename AccumulatorType<T>::type>()
+            .reshape(two_dims)
+            .sum(reduction_axis)
+            .template cast<T>();
   }
 
  private:
@@ -305,7 +318,7 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
     OP_REQUIRES(context, stream, errors::Internal("No GPU stream available."));
     perftools::gputools::DeviceMemoryBase output_ptr(
         output->flat<T>().data(), output->NumElements() * sizeof(T));
-    stream->ThenMemset32(&output_ptr, 0, output->NumElements() * sizeof(T));
+    stream->ThenMemZero(&output_ptr, output->NumElements() * sizeof(T));
     BiasGradGPU<T>::compute(context->template eigen_device<Device>(),
                             output_backprop.template flat<T>().data(),
                             output->flat<T>().data(), batch, width, height,

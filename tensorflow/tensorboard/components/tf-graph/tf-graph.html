@@ -43,7 +43,6 @@ paper-button {
           highlighted-node="[[_getVisible(highlightedNode)]]"
           selected-node="[[selectedNode]]"
           color-by="[[colorBy]]"
-          name="[[graphName]]"
           progress="[[progress]]"
     ></tf-graph-scene>
   </div>
@@ -63,6 +62,10 @@ Polymer({
       observer: '_graphChanged'
     },
     basicGraph: Object,
+    stats: {
+      type: Object,
+      observer: '_statsChanged'
+    },
     hierarchyParams: Object,
     progress: {
       type: Object,
@@ -101,8 +104,16 @@ Polymer({
   observers: [
     '_buildRenderHierarchy(graphHierarchy)'
   ],
+  _statsChanged: function(stats) {
+    if (stats != null) {
+      tf.graph.joinStatsInfoWithGraph(this.basicGraph, stats);
+      tf.graph.hierarchy.joinAndAggregateStats(this.graphHierarchy, stats);
+      // Recompute the rendering information.
+      this._buildRenderHierarchy(this.graphHierarchy);
+    }
+  },
   _buildRenderHierarchy: function(graphHierarchy) {
-    tf.time('new tf.graph.render.Hierarchy', function() {
+    tf.graph.util.time('new tf.graph.render.Hierarchy', function() {
       if (graphHierarchy.root.type !== tf.graph.NodeType.META) {
         // root must be metanode but sometimes Polymer's dom-if has not
         // remove tf-graph element yet in <tf-node-info>
@@ -254,8 +265,8 @@ Polymer({
       value: 0,
       msg: ''
     });
-    var tracker = tf.getTracker(this);
-    var hierarchyTracker = tf.getSubtaskTracker(tracker, 100,
+    var tracker = tf.graph.util.getTracker(this);
+    var hierarchyTracker = tf.graph.util.getSubtaskTracker(tracker, 100,
           'Namespace hierarchy');
     tf.graph.hierarchy.build(this.basicGraph, this.hierarchyParams, hierarchyTracker)
     .then(function(graphHierarchy) {

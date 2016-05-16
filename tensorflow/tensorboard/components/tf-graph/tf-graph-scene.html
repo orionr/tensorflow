@@ -569,12 +569,12 @@ Polymer({
   /** Main method for building the scene */
   _build: function(renderHierarchy) {
     this.templateIndex = renderHierarchy.hierarchy.getTemplateIndex();
-    tf.time('tf-graph-scene (layout):', function() {
+    tf.graph.util.time('tf-graph-scene (layout):', function() {
       // layout the scene for this meta / series node
       tf.graph.layout.layoutScene(renderHierarchy.root, this);
     }.bind(this));
 
-    tf.time('tf-graph-scene (build scene):', function() {
+    tf.graph.util.time('tf-graph-scene (build scene):', function() {
       tf.graph.scene.buildGroup(d3.select(this.$.root), renderHierarchy.root, this);
       tf.graph.scene.addGraphClickListener(this.$.svg, this);
     }.bind(this));
@@ -676,12 +676,14 @@ Polymer({
     * UI controls.
     */
   _colorByChanged: function() {
-    // We iterate through each svg node and update its state.
-    _.each(this._nodeGroupIndex, function(nodeGroup, nodeName) {
-      this._updateNodeState(nodeName);
-    }, this);
-    // Notify also the minimap.
-    this.minimap.update();
+    if (this.renderHierarchy != null) {
+      // We iterate through each svg node and update its state.
+      _.each(this._nodeGroupIndex, function(nodeGroup, nodeName) {
+        this._updateNodeState(nodeName);
+      }, this);
+      // Notify also the minimap.
+      this.minimap.update();
+    }
   },
   fit: function() {
     tf.graph.scene.fit(this.$.svg, this.$.root, this._zoom, function() {

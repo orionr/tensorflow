@@ -72,6 +72,9 @@ from tensorflow.python.ops import rnn
 from tensorflow.python.ops import rnn_cell
 from tensorflow.python.ops import variable_scope
 
+# TODO(ebrevdo): Remove once _linear is fully deprecated.
+linear = rnn_cell._linear  # pylint: disable=protected-access
+
 
 def _extract_argmax_and_embed(embedding, output_projection=None,
                               update_embedding=True):
@@ -449,7 +452,7 @@ def attention_decoder(decoder_inputs, initial_state, attention_states, cell,
     initial_state: 2D Tensor [batch_size x cell.state_size].
     attention_states: 3D Tensor [batch_size x attn_length x attn_size].
     cell: rnn_cell.RNNCell defining the cell function and size.
-    output_size: Size of the output vectors; if None, we use output_size.
+    output_size: Size of the output vectors; if None, we use cell.output_size.
     num_heads: Number of attention heads that read from attention_states.
     loop_function: If not None, this function will be applied to i-th output
       in order to generate i+1-th input, and decoder_inputs will be ignored,
@@ -483,8 +486,9 @@ def attention_decoder(decoder_inputs, initial_state, attention_states, cell,
         It is a 2D Tensor of shape [batch_size x cell.state_size].
 
   Raises:
-    ValueError: when num_heads is not positive, there are no inputs, or shapes
-      of attention_states are not set.
+    ValueError: when num_heads is not positive, there are no inputs, shapes
+      of attention_states are not set, or input size cannot be inferred
+      from the input.
   """
   if not decoder_inputs:
     raise ValueError("Must provide at least 1 input to attention decoder.")
@@ -521,7 +525,7 @@ def attention_decoder(decoder_inputs, initial_state, attention_states, cell,
       ds = []  # Results of attention reads will be stored here.
       for a in xrange(num_heads):
         with variable_scope.variable_scope("Attention_%d" % a):
-          y = rnn_cell.linear(query, attention_vec_size, True)
+          y = linear(query, attention_vec_size, True)
           y = array_ops.reshape(y, [-1, 1, 1, attention_vec_size])
           # Attention mask is a softmax of v^T * tanh(...).
           s = math_ops.reduce_sum(
@@ -551,7 +555,10 @@ def attention_decoder(decoder_inputs, initial_state, attention_states, cell,
         with variable_scope.variable_scope("loop_function", reuse=True):
           inp = loop_function(prev, i)
       # Merge input and previous attentions into one vector of the right size.
-      x = rnn_cell.linear([inp] + attns, cell.input_size, True)
+      input_size = inp.get_shape().with_rank(2)[1]
+      if input_size.value is None:
+        raise ValueError("Could not infer input size from input: %s" % inp.name)
+      x = linear([inp] + attns, input_size, True)
       # Run the RNN.
       cell_output, state = cell(x, state)
       # Run the attention mechanism.
@@ -563,7 +570,7 @@ def attention_decoder(decoder_inputs, initial_state, attention_states, cell,
         attns = attention(state)
 
       with variable_scope.variable_scope("AttnOutputProjection"):
-        output = rnn_cell.linear([cell_output] + attns, output_size, True)
+        output = linear([cell_output] + attns, output_size, True)
       if loop_function is not None:
         prev = output
       outputs.append(output)
